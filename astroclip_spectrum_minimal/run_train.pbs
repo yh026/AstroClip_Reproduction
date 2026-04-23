@@ -1,0 +1,65 @@
+#!/bin/bash
+#PBS -N specformer-train
+#PBS -q normal
+#PBS -l select=1:ncpus=16:ngpus=1:mpiprocs=1:ompthreads=8
+#PBS -l walltime=48:00:00
+#PBS -j oe
+#PBS -o /home/users/nus/e1538405/DSA5204/output/specformer-train.out
+#PBS -e /home/users/nus/e1538405/DSA5204/output/specformer-train.err
+
+set -euo pipefail
+
+# ── paths ──────────────────────────────────────────────────────────────────
+PROJECT_DIR="/home/users/nus/e1538405/DSA5204/astroclip_spectrum_minimal"
+OUT_DIR="/home/users/nus/e1538405/DSA5204/output"
+mkdir -p "${OUT_DIR}"
+
+# Redirect all stdout/stderr into timestamped log files
+LOG_STDOUT="${OUT_DIR}/specformer-train-${PBS_JOBID:-$$}.out"
+LOG_STDERR="${OUT_DIR}/specformer-train-${PBS_JOBID:-$$}.err"
+exec >"${LOG_STDOUT}" 2>"${LOG_STDERR}"
+
+if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+  cd "${PBS_O_WORKDIR}"
+fi
+
+# ── conda environment ───────────────────────────────────────────────────────
+CONDA_BASE="${CONDA_BASE:-/home/users/nus/e1538405/miniconda3}"
+if [[ -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
+  . "${CONDA_BASE}/etc/profile.d/conda.sh"
+elif command -v conda >/dev/null 2>&1; then
+  eval "$(conda shell.bash hook)"
+fi
+conda activate "${CONDA_ENV:-DSA5204}"
+
+# ── env vars ────────────────────────────────────────────────────────────────
+export LD_LIBRARY_PATH="${CONDA_PREFIX:+${CONDA_PREFIX}/lib:}${LD_LIBRARY_PATH:-}"
+export PYTHONUNBUFFERED=1
+export PYTHONNOUSERSITE=1
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-8}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
+cd "${PROJECT_DIR}"
+
+# ── print job info ───────────────────────────────────────────────────────────
+echo "============================================================"
+echo "[INFO] job started at $(date)"
+echo "[INFO] host          : $(hostname)"
+echo "[INFO] PBS_JOBID     : ${PBS_JOBID:-N/A}"
+echo "[INFO] project dir   : ${PROJECT_DIR}"
+echo "[INFO] conda env     : $(conda info --envs | grep '*' || echo 'unknown')"
+echo "[INFO] python        : $(which python)"
+echo "[INFO] pytorch ver   : $(python -c 'import torch; print(torch.__version__)')"
+echo "[INFO] CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
+echo "[INFO] GPU device    : $(python -c 'import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A")')"
+echo "============================================================"
+
+# ── run training ─────────────────────────────────────────────────────────────
+python "${PROJECT_DIR}/train.py" --config "${PROJECT_DIR}/config.yaml"
+
+# ── done ─────────────────────────────────────────────────────────────────────
+echo "============================================================"
+echo "[INFO] job finished at $(date)"
+echo "============================================================"

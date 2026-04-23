@@ -1,0 +1,70 @@
+#!/bin/bash
+#PBS -N specformer-viz
+#PBS -q normal
+#PBS -l select=1:ncpus=8:ngpus=0:mem=32gb
+#PBS -l walltime=02:00:00
+#PBS -j oe
+#PBS -o /home/users/nus/e1538405/DSA5204/output/specformer-viz.out
+#PBS -e /home/users/nus/e1538405/DSA5204/output/specformer-viz.err
+
+set -euo pipefail
+
+# ── paths ──────────────────────────────────────────────────────────────────
+PROJECT_DIR="/home/users/nus/e1538405/DSA5204/astroclip_spectrum_minimal"
+OUT_DIR="/home/users/nus/e1538405/DSA5204/output"
+mkdir -p "${OUT_DIR}"
+
+LOG_STDOUT="${OUT_DIR}/specformer-viz-${PBS_JOBID:-$$}.out"
+LOG_STDERR="${OUT_DIR}/specformer-viz-${PBS_JOBID:-$$}.err"
+exec >"${LOG_STDOUT}" 2>"${LOG_STDERR}"
+
+if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+  cd "${PBS_O_WORKDIR}"
+fi
+
+# ── conda environment ───────────────────────────────────────────────────────
+CONDA_BASE="${CONDA_BASE:-/home/users/nus/e1538405/miniconda3}"
+if [[ -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
+  . "${CONDA_BASE}/etc/profile.d/conda.sh"
+elif command -v conda >/dev/null 2>&1; then
+  eval "$(conda shell.bash hook)"
+fi
+conda activate "${CONDA_ENV:-DSA5204}"
+
+# ── env vars ────────────────────────────────────────────────────────────────
+export LD_LIBRARY_PATH="${CONDA_PREFIX:+${CONDA_PREFIX}/lib:}${LD_LIBRARY_PATH:-}"
+export PYTHONUNBUFFERED=1
+export PYTHONNOUSERSITE=1
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
+
+cd "${PROJECT_DIR}"
+
+# ── configurable parameters ─────────────────────────────────────────────────
+CHECKPOINT="${PROJECT_DIR}/outputs_specformer/best.pt"
+DATA_PATH="/scratch/users/nus/e1553819/astroclip/shared_subset_10pct_90_10"
+FIG_DIR="${PROJECT_DIR}/outputs_specformer/visualization"
+
+# ── print job info ───────────────────────────────────────────────────────────
+echo "============================================================"
+echo "[INFO] job started at $(date)"
+echo "[INFO] host          : $(hostname)"
+echo "[INFO] PBS_JOBID     : ${PBS_JOBID:-N/A}"
+echo "[INFO] checkpoint    : ${CHECKPOINT}"
+echo "[INFO] data_path     : ${DATA_PATH}"
+echo "[INFO] figure output : ${FIG_DIR}"
+echo "============================================================"
+
+# ── run visualization ────────────────────────────────────────────────────────
+python "${PROJECT_DIR}/visualize_model.py" \
+    --checkpoint "${CHECKPOINT}" \
+    --data_path "${DATA_PATH}" \
+    --out_dir "${FIG_DIR}" \
+    --device cpu \
+    --max_embed_samples 500
+
+# ── done ─────────────────────────────────────────────────────────────────────
+echo "============================================================"
+echo "[INFO] job finished at $(date)"
+echo "[INFO] figures saved to: ${FIG_DIR}"
+echo "============================================================"

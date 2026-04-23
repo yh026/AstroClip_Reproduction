@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# 模型权重和训练输出 — 太大不能传
+*.pt
+*.pth
+*.ckpt
+outputs_*/
+
+# 数据
+*.fits
+*.h5
+*.hdf5
+*.npy
+*.npz
+
+# 系统/IDE
+.DS_Store
+.vscode/
+.idea/
