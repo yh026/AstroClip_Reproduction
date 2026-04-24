@@ -1,0 +1,113 @@
+MODEL:
+  WEIGHTS: ""
+
+#! 新增 //TO DO train最后一条 evaluation最后三条
+#! 小模型版本（从头开始训练） backbone真正吃算力 dino ibot head并不 而且缩这个可能影响表达能力
+
+file:
+  file_name: "config_continue.yaml"
+
+dino:
+  loss_weight: 1.0
+  head_n_prototypes: 65536 #!65536
+  head_bottleneck_dim: 256 #!256
+  head_nlayers: 3
+  head_hidden_dim: 2048 #!2048
+  koleo_loss_weight: 0.1
+
+ibot:
+  loss_weight: 1.0
+  mask_sample_probability: 0.5
+  mask_ratio_min_max: [0.1, 0.5]
+  separate_head: false
+  head_n_prototypes: 65536 #!65536
+  head_bottleneck_dim: 256 #!256
+  head_nlayers: 3
+  head_hidden_dim: 2048 #!2048
+
+train:
+  batch_size_per_gpu: 24 #! 实际batch size 为 72* GPU数量 但是没有其他帮助的情况下 torch.cuda.OutOfMemoryError: CUDA out of memory. 工作站的显卡GPU显存都不够了 
+  dataset_type: "hf_arrow"   # choices: hf_arrow （Hugging Face Apache Arrow Format）, legacy_h5, fake
+  dataset_path: /scratch/users/nus/e1553819/astroclip/shared_subset_10pct_90_10 #! 原始数据的10% 没有经过其他任何操作
+  #/scratch/users/nus/e0492520/astroclip_pipeline/exported/astroclip_dataset #!原始数据的10% crop 144*144 + pixel标准化
+  output_dir: /scratch/users/nus/e1554059/astroclip/image_encoder/devExpTransfer_foda #fmda #foda  #devExpScratch #"./outputs" # 存储训练过程中所有输出  不能用自己空间磁盘的内存 会爆炸的 要用/scratch
+  saveckp_freq: 20 #! 20 每 20个epoch保存一次模型
+  seed: 0 # 随机种子
+  num_workers: 10 #! DataLoader 使用 10个进程并行加载数据 CPU 负责加载数据 → GPU 负责训练
+  OFFICIAL_EPOCH_LENGTH: 1250 #100 #!1250 # 定义一个 epoch = 固定 1250 个 iteration（step）
+  centering: "centering"     # or sinkhorn_knopp
+  resume_path: "" # 当前目录下的文件 #!注意 这个是用于断点续训的！
+  # "/scratch/users/nus/e1554059/astroclip/image_encoder/devExp1/final_checkpoint.pt" # 断点续训 
+  #"" （从头训练 初始训练需这个 否则会找不到ckpt文件）#! 新增 //TO DO # 例如 "./outputs/final_checkpoint.pt"
+
+  # Note: /home = 长期存储（小容量、受配额限制） /scratch = 临时高速存储（大容量、可能被清理） 工作站中应该是两个平行的文件夹
+
+student:
+  arch: vit_large  #! vit_small, vit_base, vit_large （这个配置文件里 所有和原始文件一致）
+  patch_size: 12
+  drop_path_rate: 0.3
+  layerscale: 1.0e-05 #! 可调整
+  drop_path_uniform: true # 随机跳过某些 transformer block 每一层 drop 的概率 = 相同
+  pretrained_weights: "astrodino.ckpt" #! 文件导入训练好的模型
+  ffn_layer: "mlp"
+  qkv_bias: true
+  proj_bias: true
+  ffn_bias: true
+  num_register_tokens: 0 #! 可更改
+  interpolate_antialias: false 
+  # token 数量变了  原来的 position embedding 对不上了 可以插值（interpolation）位置编码
+  # 在做插值时，是否使用抗锯齿（anti-aliasing） 防止插值时出现“锯齿 / 高频噪声”
+  interpolate_offset: 0.1 # 在插值位置编码时，加一个 小偏移量（offset） 避免边界误差
+  in_chans: 3 # 输入通道数
+
+teacher:
+  momentum_teacher: 0.992 #!
+  final_momentum_teacher: 1.0
+  warmup_teacher_temp: 0.04 #! 训练一开始，teacher 温度更低 输出更“尖锐”，避免混乱
+  teacher_temp: 0.07 #! teacher 输出 softmax 的“温度”
+  warmup_teacher_temp_epochs: 30 #! 前 30 个 epoch：teacher_temp 从 0.04 → 0.07 之后固定
+  in_chans: 3 # 必须和数据一致
+
+optim:
+  epochs: 80 #50 #! 200 总共训练 200 个 epoch 
+  weight_decay: 0.001 #! 0.001 初始权重衰减 权重衰减可以理解成一种正则化，防止参数变得太大 
+  #越大约束越强 更不容易过拟合
+  weight_decay_end: 0.01 #!0.01 训练结束时的权重衰减值 配合 cosine schedule 使用 有助于后期稳定表示学习
+  base_lr: 2.0e-4 #! 2.0e-4 基础学习率 往往不是最终直接用到每个参数组上的实际 lr，而是一个“参考学习率”。
+  lr: 0.0   # 占位 auto-computed from base_lr and batch size   Originally 0.0
+  warmup_epochs: 32 #!32  前 32 个 epoch 做学习率 warmup 
+  # 训练刚开始参数还很乱 如果一上来 lr 太大，容易震荡甚至发散 warmup 可以让训练更稳定
+  min_lr: 1.0e-06 # 学习率调度到最后时允许降到的 最小学习率
+  clip_grad: 3.0  # 如果梯度太大，就把它限制住，防止梯度爆炸
+  freeze_last_layer_epochs: 1 #! 表示前 1 个 epoch 冻结最后一层 先冻结一下，能让 backbone 和前面的表示先稳定一些
+  scaling_rule: sqrt_wrt_1024   # linear_wrt_1024 or sqrt_wrt_1024
+  # 学习率要根据总 batch size 按某个规则缩放 lr_actual = base_lr × sqrt(batch_size / 1024) 平方根缩放，通常更保守一点
+  patch_embed_lr_mult: 0.2
+  # ViT 最前面会把图像 patch 映射成 token embedding，这一层通常叫 patch embedding
+  # patch embedding 层的学习率 = 基础学习率 * layer_scale (每层layerdecay的幂次) * 0.2 
+  # 前端 patch embedding 很靠近输入，训练时太激进可能不稳定。所以常常让它更新更保守一些。
+  layerwise_decay: 0.9 # 不同层用不同学习率，通常越靠近输入层，学习率越小；越靠近输出层，学习率越大
+  # 能让训练更稳定，也更符合“底层特征通用、高层特征任务相关”的经验
+  adamw_beta1: 0.9 # 它控制的是 一阶动量 的平滑程度，也就是梯度均值的指数滑动平均 越接近 1：历史梯度记得更多
+  adamw_beta2: 0.999 # 阶动量，也就是梯度平方的滑动平均，用来估计梯度波动大小 越大：估计更平滑 越小：变化更灵敏
+
+crops:
+  global_crops_scale: [0.8,1.0] #[0.32, 1.0] #! [0.8,1.0] 面积占原图 80% ~ 100%
+  local_crops_number: 8
+  local_crops_scale: [0.4,0.6] #[0.05, 0.32] #! [0.4,0.6]
+  global_crops_size: 144 # resize 成 144*144 ViT 要求输入尺寸固定 否则：patch 数量变 position embedding 对不上
+  local_crops_size: 60
+
+astro:
+  use_astro_augmentations: true
+  to_rgb_bands: ["g", "r", "z"]
+  blur_probability: 0.5
+  noise_probability: 0.5
+
+evaluation:
+  eval_period_iterations: 12500 #20 #125 #! 12500 # 每 12500 个 iteration（训练 step）做一次评估
+  # iteration = 一次 forward + backward 
+  # if 每个 epoch = 250 iteration, then 1250 iteration ≈ 每 5 个 epoch 评估一次
+  export_max_samples: 256  #! 新增 //TO DO
+  export_layer_max_samples: 128 #! 新增 //TO DO
+  test_eval_max_batches: 200 #! 新增 //TO DO
